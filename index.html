@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css">
+
+
+    <title>Title</title>
+</head>
+
+<body>
+<div style="width:100%; text-align: center; margin-top:50px;">
+    <canvas id="gameCanv" style="display: inline; border: 1px solid grey"></canvas>
+</div>
+
+<div id="debug">
+    <p id="x"></p>
+    <p id="y"></p>
+    <p id="w"></p>
+    <p id="h"></p>
+    <p id="xVel"></p>
+    <p id="yVel"></p>
+</div>
+</body>
+<script src="https://cdn.socket.io/socket.io-1.4.5.js"></script>
+<script src="https://code.jquery.com/jquery-3.1.1.min.js"></script>
+<script src="https://ajax.googleapis.com/ajax/libs/angularjs/1.6.1/angular.min.js"></script>
+<script>
+    "use strict";
+
+
+    function Dual() {
+
+        let thisGame = this;
+        this.socket = io.connect("http://localhost");
+        this.defaultState = {x: 50, y: 0, w: 50, h: 70, c: "green"};
+        this.didWin = null;
+
+        //flip a rect state obj around the horizontal center,
+        this.flip = function (state, isRect) {
+            var middle = thisGame.canvas.width / 2;
+
+            var distanceFromMiddle = middle - state.x;
+            if (isRect) {
+                distanceFromMiddle -= thisGame.defaultState.w;
+            }
+
+
+            var flippedX = middle + distanceFromMiddle;
+
+            var flippedState = state;
+            flippedState.x = flippedX;
+            flippedState.xVel = -flippedState.xVel;
+
+            return flippedState;
+        };
+
+
+        this.socket.on("addEnemyRect", function (enemyInitialState) {
+            thisGame.enemyRect = new Rect(thisGame.defaultState);
+            thisGame.enemyRect.setState(thisGame.flip(enemyInitialState, true));
+            thisGame.enemyRect.color = "Red";
+        });
+
+        this.socket.on("enemyMoved", function (enemyState){
+            //fliped = distance from the middle + the middlea
+            thisGame.enemyRect.setState(thisGame.flip(enemyState, true));
+        });
+
+
+        this.socket.on("enemyShoot", function (bullet){
+            var enemyBullet = new Bullet(thisGame.flip(bullet), false);
+            enemyBullet.color = "red";
+            thisGame.bullets.push(enemyBullet);
+        });
+
+        function Bullet(bulletData) {
+            this.x = bulletData.x;
+            this.y = bulletData.y;
+            this.xVelocity = bulletData.xVel;
+            this.yVelocity = bulletData.yVel;
+            this.r = 5;
+            this.color = "lightgreen";
+
+
+            this.draw = function () {
+                thisGame.context.fillStyle = this.color;
+                thisGame.context.beginPath();
+                thisGame.context.arc(this.x,this.y, this.r, 0, 2 * Math.PI, false);
+                thisGame.context.fill();
+                thisGame.context.lineWidth = 1;
+                thisGame.context.strokeStyle = "black";
+                thisGame.context.stroke();
+            };
+
+            this.move = function () {
+                this.x += this.xVelocity;
+
+                if (this.y + this.yVelocity < 0 || this.y + this.yVelocity > thisGame.canvas.height)
+                {
+                    this.yVelocity *= -1;
+                }
+
+                this.y += this.yVelocity;
+            }
+
+
+        }
+
+        function Rect(rectData) {
+
+            var thisRect = this;
+            this.x = rectData.x;
+            this.y = rectData.y;
+            this.width = rectData.w;
+            this.height = rectData.h;
+            this.color = rectData.c;
+            this.velocityIncrement = 0.1;
+            this.yVelocity = 0;
+            this.xVelocity = 0;
+            this.movedX = false;
+            this.movedY = false;
+            this.yMaxVelocity = 5;
+            this.xMaxVelocity = 3;
+            this.lives = 25;
+            this.shouldFlash = 0;
+            this.flashFrames = 5;
+
+
+
+
+
+            this.getStateObj = function () {
+              return {x : this.x, y : this.y, xVel : this.xVelocity, yVel: this.yVelocity};
+            };
+
+            this.setState = function (stateObj) {
+                this.x = stateObj.x;
+                this.y = stateObj.y;
+                this.xVelocity = stateObj.xVel;
+                this.yVelocity = stateObj.yVel;
+            };
+
+
+            this.draw = function () {
+
+                if (this.shouldFlash) {
+                    this.shouldFlash--;
+                    thisGame.context.fillStyle = this.color === "green" ? "LightGreen" : "LightCoral";
+                }
+                else {
+                    thisGame.context.fillStyle = this.color;
+                }
+
+                thisGame.context.fillRect(this.x, this.y, this.width, this.height);
+
+                thisGame.context.fillStyle = "white";
+                thisGame.context.font = "30px Arial";
+                thisGame.context.textAlign = "center";
+                thisGame.context.fillText(this.lives, this.x + (.5 * this.width), this.y + (.5 * this.height) + 10);
+            };
+
+
+            this.debug = function () {
+
+                $("#x").text(`x ${this.x}`);
+                $("#y").text(`y ${this.y}`);
+                $("#w").text(`w ${this.width}`);
+                $("#h").text(`h ${this.height}`);
+                $("#xVel").text(`xVel ${this.xVelocity}`);
+                $("#yVel").text(`yVel ${this.yVelocity}`);
+
+            };
+
+            this.checkCollision = function () {
+
+                var newBullets = [];
+                thisGame.bullets.forEach(function (bullet){
+                  if (bullet.x + bullet.r > thisRect.x && bullet.x - bullet.r <= thisRect.x + thisRect.width && bullet.y + bullet.r >= thisRect.y && bullet.y - bullet.r < thisRect.y + thisRect.height) {
+                      thisRect.lives--;
+                      thisRect.shouldFlash = thisRect.flashFrames;
+                  }
+                  else {
+                      newBullets.push(bullet);
+                  }
+
+
+                });
+
+                thisGame.bullets = newBullets;
+            };
+
+            this.reduceVelocity = function (thisVel) {
+                if (Math.abs(thisVel) < 0.1) {
+                    return 0;
+                }
+
+                var signOfVelocity = thisVel / Math.abs(thisVel);
+                return thisVel + -signOfVelocity * 0.1;
+
+            };
+
+
+            this.calculateFriction = function () {
+
+                var vectorsToCheck = [];
+
+                if (!this.movedY) {
+                    this.yVelocity = this.reduceVelocity(this.yVelocity);
+                }
+                if (!this.movedX) {
+                    this.xVelocity = this.reduceVelocity(this.xVelocity);
+                }
+            };
+
+
+            this.checkBounds = function () {
+                if (this.y + this.yVelocity < 0 || this.y + this.height + this.yVelocity > thisGame.canvas.height) {
+                    this.yVelocity = 0;
+                }
+
+                if (this.x + this.xVelocity < 0 || this.x + this.width + this.xVelocity > thisGame.centerRect.x) {
+                    this.xVelocity = 0;
+                }
+            };
+
+
+            this.recalcPosition = function () {
+                this.checkBounds();
+                this.y += this.yVelocity;
+                this.x += this.xVelocity;
+
+                this.calculateFriction();
+            };
+
+
+
+            this.updateServer = function () {
+                var emitObj = this.getStateObj();
+                thisGame.socket.emit("moveRect", emitObj);
+            };
+
+
+            this.safeIncXVelocity = function (incrementVal) {
+                this.movedX = true;
+                let newVelocity = this.xVelocity + incrementVal;
+
+                if (Math.abs(newVelocity) < this.xMaxVelocity) {
+                    this.xVelocity = newVelocity;
+                }
+            };
+
+            this.safeIncYVelocity = function (incrementVal) {
+                this.movedY = true;
+                let newVelocity =  this.yVelocity + incrementVal;
+                if (Math.abs(newVelocity) < this.yMaxVelocity) {
+                    this.yVelocity = newVelocity;
+                }
+            };
+
+            this.moveUp = function () {
+                this.safeIncYVelocity(-this.velocityIncrement);
+            };
+
+            this.moveDown = function () {
+                this.safeIncYVelocity(this.velocityIncrement);
+            };
+
+            this.moveLeft = function () {
+                this.safeIncXVelocity(-this.velocityIncrement);
+            };
+
+            this.moveRight = function () {
+                this.safeIncXVelocity(this.velocityIncrement);
+            };
+
+        }
+
+        this.shoot = function () {
+            var bulletData = {
+                x : this.myRect.x + this.myRect.width + 5, //add 5 so bullets don't collide with shooter
+                y: this.myRect.y + (0.5 * this.myRect.height),
+                xVel: 4,
+                yVel: this.myRect.yVelocity
+            };
+
+            var someBullet = new Bullet(bulletData);
+            thisGame.socket.emit("shoot", bulletData);
+            this.bullets.push(someBullet);
+        };
+
+
+        this.setupMap = function () {
+            var centerLineWidth = 2;
+            var center = thisGame.canvas.width / 2;
+            var x = center - (.5 * centerLineWidth);
+            this.centerRect = {x: x, y: 0, width : centerLineWidth};
+        };
+
+
+        this.start = function () {
+            this.canvas = document.getElementById("gameCanv");
+            this.context = this.canvas.getContext("2d");
+            this.canvas.width = 1000;
+            this.canvas.height = 480;
+            this.myRect = new Rect(thisGame.defaultState);
+
+            this.keys = [];
+            window.addEventListener("keydown", function (e) {
+                thisGame.keys[e.keyCode] = true;
+
+                if (e.keyCode === 32) {
+                    thisGame.shoot();
+                }
+
+            });
+            window.addEventListener("keyup", function (e) {
+                thisGame.keys[e.keyCode] = false;
+
+
+            });
+
+            this.setupMap();
+            this.bullets = [];
+
+
+            setInterval(this.mainLoop, 5);
+        };
+
+
+        this.clear = function () {
+            this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        };
+
+
+        this.moveBullets = function () {
+            var stillExistingBullets = [];
+            for (var i = 0; i < this.bullets.length; i++) {
+                this.bullets[i].move();
+
+                //we don't add bullets that are off the edge of the screen
+                if (this.bullets[i].x < this.canvas.width && this.bullets[i].x > 0) {
+                    stillExistingBullets.push(this.bullets[i]);
+                }
+
+            }
+
+            this.bullets = stillExistingBullets;
+        };
+
+
+        this.checkGameOver = function () {
+          if (thisGame.didWin === null && (this.myRect.lives <= 0 || this.enemyRect.lives <= 0)) {
+              thisGame.didWin = thisGame.myRect.lives > 0;
+          }
+        };
+
+        this.update = function () {
+
+            this.myRect.movedX = false;
+            this.myRect.movedY = false;
+
+            var oldPosition = this.myRect.getStateObj();
+
+            //w
+            if (this.keys[87]) {
+                this.myRect.moveUp();
+            }
+
+            //s
+            if (this.keys[83]) {
+                this.myRect.moveDown();
+            }
+
+            //a
+            if (this.keys[65]) {
+                this.myRect.moveLeft();
+            }
+
+            //d
+            if (this.keys[68]) {
+                this.myRect.moveRight();
+            }
+
+
+            this.myRect.recalcPosition();
+            this.myRect.debug();
+
+            var currentPosition = this.myRect.getStateObj();
+            if (JSON.stringify(currentPosition) !== JSON.stringify(oldPosition)) {
+              this.myRect.updateServer();
+            }
+
+            this.moveBullets();
+            this.myRect.checkCollision();
+
+            if (this.enemyRect) {
+                this.enemyRect.checkCollision();
+                this.checkGameOver();
+            }
+
+
+        };
+
+
+        this.drawMap = function () {
+
+            thisGame.context.fillStyle = "black";
+            thisGame.context.fillRect(thisGame.centerRect.x, thisGame.centerRect.y, thisGame.centerRect.width, thisGame.canvas.height);
+        };
+
+        this.draw = function () {
+            this.clear();
+            this.drawMap();
+            this.myRect.draw();
+
+
+            if (this.enemyRect) {
+                this.enemyRect.draw();
+            }
+
+            this.bullets.forEach(function (bullet) {
+                bullet.draw()
+            });
+
+            if (thisGame.didWin !== null)
+            {
+                thisGame.context.fillStyle = thisGame.didWin ? "green" : "red";
+                thisGame.context.font = "100px Arial";
+                thisGame.context.textAlign = "center";
+
+                thisGame.context.fillText(thisGame.didWin ? "You win!" : "You lose!", thisGame.canvas.width / 2 + 5, thisGame.canvas.height / 2);
+            }
+
+
+        };
+
+        this.mainLoop = function () {
+            thisGame.update();
+            thisGame.draw();
+        };
+
+
+        this.start();
+    }
+
+
+    var currentGame = new Dual();
+
+
+</script>
+</html>
